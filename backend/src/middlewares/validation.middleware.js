@@ -1,0 +1,17 @@
+import { AppError } from "../utils/AppError.js";
+
+export const validate = (schema, property = "body") => (req, _res, next) => {
+  const { error, value } = schema.validate(req[property], {
+    abortEarly: false,
+    stripUnknown: true
+  });
+
+  if (error) {
+    return next(
+      new AppError("Validation failed", 422, error.details.map((item) => item.message))
+    );
+  }
+
+  req[property] = value;
+  next();
+};
