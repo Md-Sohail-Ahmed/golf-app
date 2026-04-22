@@ -15,6 +15,27 @@ const PLAN_CONFIG = {
   }
 };
 
+const toDateFromUnix = (value) => {
+  if (!Number.isFinite(Number(value))) {
+    return null;
+  }
+
+  return new Date(Number(value) * 1000);
+};
+
+const getSubscriptionPeriodDates = (stripeSubscription) => {
+  const firstItem = stripeSubscription.items?.data?.[0];
+  const currentPeriodStart =
+    stripeSubscription.current_period_start ?? firstItem?.current_period_start ?? null;
+  const currentPeriodEnd =
+    stripeSubscription.current_period_end ?? firstItem?.current_period_end ?? null;
+
+  return {
+    currentPeriodStart: toDateFromUnix(currentPeriodStart),
+    currentPeriodEnd: toDateFromUnix(currentPeriodEnd)
+  };
+};
+
 export class SubscriptionService {
   static async createCheckoutSession(user, planType) {
     const plan = PLAN_CONFIG[planType];
@@ -58,14 +79,15 @@ export class SubscriptionService {
     const amount = stripeSubscription.items.data[0]?.price?.unit_amount
       ? stripeSubscription.items.data[0].price.unit_amount / 100
       : 0;
+    const { currentPeriodStart, currentPeriodEnd } = getSubscriptionPeriodDates(stripeSubscription);
     const activationPayload = {
       stripeCustomerId: session.customer,
       stripeSubscriptionId: session.subscription,
       status: "active",
       amount,
       currency: stripeSubscription.currency || "usd",
-      currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
+      currentPeriodStart,
+      currentPeriodEnd
     };
 
     let updated = await SubscriptionModel.activateByCheckoutSessionId(session.id, activationPayload);
@@ -89,8 +111,8 @@ export class SubscriptionService {
         status: "active",
         amount,
         currency: stripeSubscription.currency || "usd",
-        currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-        currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
+        currentPeriodStart,
+        currentPeriodEnd
       });
     }
 
@@ -138,10 +160,11 @@ export class SubscriptionService {
 
   static async handleSubscriptionUpdated(stripeSubscription) {
     const mappedStatus = stripeSubscription.status === "active" ? "active" : "inactive";
+    const { currentPeriodStart, currentPeriodEnd } = getSubscriptionPeriodDates(stripeSubscription);
     const updated = await SubscriptionModel.updateByStripeSubscriptionId(stripeSubscription.id, {
       status: mappedStatus,
-      currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
-      currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
+      currentPeriodStart,
+      currentPeriodEnd
     });
 
     if (updated) {
