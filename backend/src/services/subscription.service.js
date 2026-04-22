@@ -54,15 +54,11 @@ export class SubscriptionService {
   }
 
   static async handleCheckoutCompleted(session) {
-    const subscription = await SubscriptionModel.findByCheckoutSessionId(session.id);
-    if (!subscription) return null;
-
     const stripeSubscription = await stripe.subscriptions.retrieve(session.subscription);
     const amount = stripeSubscription.items.data[0]?.price?.unit_amount
       ? stripeSubscription.items.data[0].price.unit_amount / 100
       : 0;
-
-    const updated = await SubscriptionModel.activateByCheckoutSessionId(session.id, {
+    const activationPayload = {
       stripeCustomerId: session.customer,
       stripeSubscriptionId: session.subscription,
       status: "active",
@@ -70,7 +66,33 @@ export class SubscriptionService {
       currency: stripeSubscription.currency || "usd",
       currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
       currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
-    });
+    };
+
+    let updated = await SubscriptionModel.activateByCheckoutSessionId(session.id, activationPayload);
+
+    // In production webhooks, we may occasionally miss the pending row lookup.
+    // Fall back to creating the active subscription from Checkout metadata instead of crashing.
+    if (!updated) {
+      const userId = session.metadata?.userId;
+      const planType = session.metadata?.planType;
+
+      if (!userId || !planType) {
+        throw new AppError("Checkout session metadata is missing user or plan information", 500);
+      }
+
+      updated = await SubscriptionModel.create({
+        userId,
+        stripeCustomerId: session.customer,
+        stripeSubscriptionId: session.subscription,
+        stripeCheckoutSessionId: session.id,
+        planType,
+        status: "active",
+        amount,
+        currency: stripeSubscription.currency || "usd",
+        currentPeriodStart: new Date(stripeSubscription.current_period_start * 1000),
+        currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
+      });
+    }
 
     await UserModel.updateSubscriptionStatus(updated.user_id, "active");
     await NotificationModel.create({
